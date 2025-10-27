@@ -1,0 +1,640 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, simpledialog
+import json
+import os
+from datetime import datetime
+import uuid
+
+# Configuración / Datos
+
+DATA_DIR = "."  # Cambia si quieres otra carpeta
+PRODUCTS_FILE = os.path.join(DATA_DIR, "products.json")
+CLIENTS_FILE = os.path.join(DATA_DIR, "clients.json")
+TICKETS_FILE = os.path.join(DATA_DIR, "tickets.json")
+
+IVA_RATE = 0.16
+
+# Credenciales (ejemplo)
+USERS = {
+    "admin": {"password": "admin123", "role": "admin"},
+    "vendedor": {"password": "venta123", "role": "vendedor"}
+}
+
+# -------------------------
+# Utilidades de almacenamiento
+
+def load_json(path, default):
+    try:
+        if not os.path.exists(path):
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(default, f, indent=4, ensure_ascii=False)
+            return default
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        messagebox.showerror("Error", f"No se pudo leer {path}:\n{e}")
+        return default
+
+def save_json(path, data):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+    except Exception as e:
+        messagebox.showerror("Error", f"No se pudo escribir {path}:\n{e}")
+
+# Inicializa archivos con ejemplo si no existen
+DEFAULT_PRODUCTS = [
+    {"codigo": "P001", "nombre": "Cuaderno", "precio": 25.00, "stock": 50},
+    {"codigo": "P002", "nombre": "Bolígrafo", "precio": 8.50, "stock": 200},
+    {"codigo": "P003", "nombre": "Mochila", "precio": 350.0, "stock": 20}
+]
+DEFAULT_CLIENTS = [
+    {"id": "C001", "nombre": "María Pérez", "telefono": "2290001111"},
+    {"id": "C002", "nombre": "Luis García", "telefono": "2290002222"}
+]
+DEFAULT_TICKETS = []
+
+# -------------------------
+# App
+
+class TiendaApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Tienda - Práctica Python")
+        self.user = None  # {username, role}
+        self.products = load_json(PRODUCTS_FILE, DEFAULT_PRODUCTS)
+        self.clients = load_json(CLIENTS_FILE, DEFAULT_CLIENTS)
+        self.tickets = load_json(TICKETS_FILE, DEFAULT_TICKETS)
+        self.login_screen()
+
+    # -------------------------
+    # Login
+    
+    def login_screen(self):
+        self.clear_root()
+        frm = ttk.Frame(self.root, padding=20)
+        frm.pack(expand=True)
+
+        ttk.Label(frm, text="Iniciar sesión", font=("Segoe UI", 14, "bold")).grid(row=0, column=0, columnspan=2, pady=(0,10))
+
+        ttk.Label(frm, text="Usuario:").grid(row=1, column=0, sticky="e")
+        user_entry = ttk.Entry(frm)
+        user_entry.grid(row=1, column=1, sticky="w")
+        user_entry.insert(0, "vendedor")  # valor por defecto para pruebas
+
+        ttk.Label(frm, text="Contraseña:").grid(row=2, column=0, sticky="e")
+        pass_entry = ttk.Entry(frm, show="*")
+        pass_entry.grid(row=2, column=1, sticky="w")
+        pass_entry.insert(0, "venta123")
+
+        def intentar_login(event=None):
+            username = user_entry.get().strip()
+            password = pass_entry.get().strip()
+            if username in USERS and USERS[username]["password"] == password:
+                self.user = {"username": username, "role": USERS[username]["role"]}
+                self.main_screen()
+            else:
+                messagebox.showerror("Acceso denegado", "Usuario o contraseña incorrectos.")
+
+        login_btn = ttk.Button(frm, text="Ingresar", command=intentar_login)
+        login_btn.grid(row=3, column=0, columnspan=2, pady=10)
+
+        # Enter para login
+        self.root.bind("<Return>", intentar_login)
+
+    # -------------------------
+    # Pantalla principal (notebook)
+
+    def main_screen(self):
+        self.clear_root()
+        self.root.unbind("<Return>")
+        topfrm = ttk.Frame(self.root)
+        topfrm.pack(fill="x")
+
+        user_label = ttk.Label(topfrm, text=f"Usuario: {self.user['username']} | Rol: {self.user['role']}")
+        user_label.pack(side="left", padx=10, pady=8)
+
+        logout_btn = ttk.Button(topfrm, text="Cerrar sesión", command=self.logout)
+        logout_btn.pack(side="right", padx=10, pady=8)
+
+        # Notebook con pestañas
+        nb = ttk.Notebook(self.root)
+        nb.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Pestañas
+        tab_products = ttk.Frame(nb)
+        tab_clients = ttk.Frame(nb)
+        tab_sales = ttk.Frame(nb)
+        tab_tickets = ttk.Frame(nb)
+
+        nb.add(tab_products, text="Productos")
+        nb.add(tab_clients, text="Clientes")
+        nb.add(tab_sales, text="Ventas")
+        nb.add(tab_tickets, text="Tickets")
+
+        # Llenar tabs
+        self.build_products_tab(tab_products)
+        self.build_clients_tab(tab_clients)
+        self.build_sales_tab(tab_sales)
+        self.build_tickets_tab(tab_tickets)
+
+    def logout(self):
+        if messagebox.askyesno("Cerrar sesión", "¿Deseas cerrar sesión?"):
+            self.user = None
+            self.login_screen()
+
+    # -------------------------
+    # Productos
+
+    def build_products_tab(self, parent):
+        frm = ttk.Frame(parent, padding=10)
+        frm.pack(fill="both", expand=True)
+
+        # Left: lista
+        left = ttk.Frame(frm)
+        left.pack(side="left", fill="both", expand=True, padx=(0,10))
+
+        ttk.Label(left, text="Productos", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        self.products_listbox = tk.Listbox(left, height=15)
+        self.products_listbox.pack(fill="both", expand=True, pady=5)
+        self.refresh_products_listbox()
+
+        # Right: formulario
+        right = ttk.Frame(frm)
+        right.pack(side="right", fill="y")
+
+        ttk.Label(right, text="Código:").grid(row=0, column=0, sticky="e")
+        self.prod_codigo = ttk.Entry(right)
+        self.prod_codigo.grid(row=0, column=1, pady=2)
+
+        ttk.Label(right, text="Nombre:").grid(row=1, column=0, sticky="e")
+        self.prod_nombre = ttk.Entry(right)
+        self.prod_nombre.grid(row=1, column=1, pady=2)
+
+        ttk.Label(right, text="Precio (MXN):").grid(row=2, column=0, sticky="e")
+        self.prod_precio = ttk.Entry(right)
+        self.prod_precio.grid(row=2, column=1, pady=2)
+
+        ttk.Label(right, text="Stock:").grid(row=3, column=0, sticky="e")
+        self.prod_stock = ttk.Entry(right)
+        self.prod_stock.grid(row=3, column=1, pady=2)
+
+        def on_select_prod(event=None):
+            sel = self.products_listbox.curselection()
+            if not sel: return
+            idx = sel[0]
+            p = self.products[idx]
+            self.prod_codigo.delete(0, tk.END); self.prod_codigo.insert(0, p["codigo"])
+            self.prod_nombre.delete(0, tk.END); self.prod_nombre.insert(0, p["nombre"])
+            self.prod_precio.delete(0, tk.END); self.prod_precio.insert(0, str(p["precio"]))
+            self.prod_stock.delete(0, tk.END); self.prod_stock.insert(0, str(p.get("stock", 0)))
+
+        self.products_listbox.bind("<<ListboxSelect>>", on_select_prod)
+
+        def add_product():
+            codigo = self.prod_codigo.get().strip()
+            nombre = self.prod_nombre.get().strip()
+            try:
+                precio = float(self.prod_precio.get())
+            except:
+                messagebox.showerror("Error", "Precio inválido.")
+                return
+            try:
+                stock = int(self.prod_stock.get())
+            except:
+                messagebox.showerror("Error", "Stock inválido (entero).")
+                return
+            if not codigo or not nombre:
+                messagebox.showerror("Error", "Completa código y nombre.")
+                return
+            # revisar duplicados de codigo
+            for p in self.products:
+                if p["codigo"] == codigo and p["nombre"] != nombre:
+                    messagebox.showerror("Error", "Ya existe un producto con ese código.")
+                    return
+            # si existe, actualizar; si no, añadir
+            for i,p in enumerate(self.products):
+                if p["codigo"] == codigo:
+                    self.products[i] = {"codigo": codigo, "nombre": nombre, "precio": precio, "stock": stock}
+                    save_json(PRODUCTS_FILE, self.products)
+                    self.refresh_products_listbox()
+                    messagebox.showinfo("Producto", "Producto actualizado.")
+                    return
+            # nuevo
+            self.products.append({"codigo": codigo, "nombre": nombre, "precio": precio, "stock": stock})
+            save_json(PRODUCTS_FILE, self.products)
+            self.refresh_products_listbox()
+            messagebox.showinfo("Producto", "Producto agregado.")
+
+        def delete_product():
+            sel = self.products_listbox.curselection()
+            if not sel:
+                messagebox.showwarning("Atención", "Selecciona un producto para eliminar.")
+                return
+            idx = sel[0]
+            p = self.products[idx]
+            if messagebox.askyesno("Confirmar", f"Eliminar {p['nombre']} (código {p['codigo']})?"):
+                self.products.pop(idx)
+                save_json(PRODUCTS_FILE, self.products)
+                self.refresh_products_listbox()
+                messagebox.showinfo("Producto", "Producto eliminado.")
+
+        ttk.Button(right, text="Agregar/Actualizar", command=add_product).grid(row=4, column=0, columnspan=2, pady=8, sticky="ew")
+        ttk.Button(right, text="Eliminar seleccionado", command=delete_product).grid(row=5, column=0, columnspan=2, pady=2, sticky="ew")
+
+    def refresh_products_listbox(self):
+        if not hasattr(self, "products_listbox"): return
+        self.products_listbox.delete(0, tk.END)
+        for p in self.products:
+            display = f"{p['codigo']} - {p['nombre']} | ${p['precio']} | stock: {p.get('stock',0)}"
+            self.products_listbox.insert(tk.END, display)
+
+    # -------------------------
+    # Clientes
+ 
+    def build_clients_tab(self, parent):
+        frm = ttk.Frame(parent, padding=10)
+        frm.pack(fill="both", expand=True)
+
+        left = ttk.Frame(frm)
+        left.pack(side="left", fill="both", expand=True, padx=(0,10))
+
+        ttk.Label(left, text="Clientes", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        self.clients_listbox = tk.Listbox(left, height=15)
+        self.clients_listbox.pack(fill="both", expand=True, pady=5)
+        self.refresh_clients_listbox()
+
+        right = ttk.Frame(frm)
+        right.pack(side="right", fill="y")
+
+        ttk.Label(right, text="ID:").grid(row=0, column=0, sticky="e")
+        self.client_id = ttk.Entry(right)
+        self.client_id.grid(row=0, column=1, pady=2)
+
+        ttk.Label(right, text="Nombre:").grid(row=1, column=0, sticky="e")
+        self.client_name = ttk.Entry(right)
+        self.client_name.grid(row=1, column=1, pady=2)
+
+        ttk.Label(right, text="Teléfono:").grid(row=2, column=0, sticky="e")
+        self.client_phone = ttk.Entry(right)
+        self.client_phone.grid(row=2, column=1, pady=2)
+
+        def on_select_client(event=None):
+            sel = self.clients_listbox.curselection()
+            if not sel: return
+            idx = sel[0]
+            c = self.clients[idx]
+            self.client_id.delete(0, tk.END); self.client_id.insert(0, c["id"])
+            self.client_name.delete(0, tk.END); self.client_name.insert(0, c["nombre"])
+            self.client_phone.delete(0, tk.END); self.client_phone.insert(0, c.get("telefono",""))
+
+        self.clients_listbox.bind("<<ListboxSelect>>", on_select_client)
+
+        def add_client():
+            cid = self.client_id.get().strip()
+            nombre = self.client_name.get().strip()
+            telefono = self.client_phone.get().strip()
+            if not cid or not nombre:
+                messagebox.showerror("Error", "Completa ID y nombre.")
+                return
+            for i,c in enumerate(self.clients):
+                if c["id"] == cid:
+                    self.clients[i] = {"id": cid, "nombre": nombre, "telefono": telefono}
+                    save_json(CLIENTS_FILE, self.clients)
+                    self.refresh_clients_listbox()
+                    messagebox.showinfo("Cliente", "Cliente actualizado.")
+                    return
+            self.clients.append({"id": cid, "nombre": nombre, "telefono": telefono})
+            save_json(CLIENTS_FILE, self.clients)
+            self.refresh_clients_listbox()
+            messagebox.showinfo("Cliente", "Cliente agregado.")
+
+        def delete_client():
+            sel = self.clients_listbox.curselection()
+            if not sel:
+                messagebox.showwarning("Atención", "Selecciona un cliente para eliminar.")
+                return
+            idx = sel[0]
+            c = self.clients[idx]
+            if messagebox.askyesno("Confirmar", f"Eliminar {c['nombre']} ({c['id']})?"):
+                self.clients.pop(idx)
+                save_json(CLIENTS_FILE, self.clients)
+                self.refresh_clients_listbox()
+                messagebox.showinfo("Cliente", "Cliente eliminado.")
+
+        ttk.Button(right, text="Agregar/Actualizar", command=add_client).grid(row=3, column=0, columnspan=2, pady=8, sticky="ew")
+        ttk.Button(right, text="Eliminar seleccionado", command=delete_client).grid(row=4, column=0, columnspan=2, pady=2, sticky="ew")
+
+    def refresh_clients_listbox(self):
+        if not hasattr(self, "clients_listbox"): return
+        self.clients_listbox.delete(0, tk.END)
+        for c in self.clients:
+            display = f"{c['id']} - {c['nombre']} | {c.get('telefono','')}"
+            self.clients_listbox.insert(tk.END, display)
+
+    # -------------------------
+    # Ventas
+
+    def build_sales_tab(self, parent):
+        frm = ttk.Frame(parent, padding=10)
+        frm.pack(fill="both", expand=True)
+
+        left = ttk.Frame(frm)
+        left.pack(side="left", fill="both", expand=True, padx=(0,10))
+
+        ttk.Label(left, text="Productos disponibles", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        self.sales_products_lb = tk.Listbox(left, height=10)
+        self.sales_products_lb.pack(fill="both", expand=False, pady=5)
+        self.refresh_sales_products()
+
+        ttk.Label(left, text="Carrito", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(10,0))
+        self.cart_tree = ttk.Treeview(left, columns=("codigo","nombre","cantidad","precio","importe"), show="headings", height=8)
+        for col, head in [("codigo","Código"),("nombre","Producto"),("cantidad","Cantidad"),("precio","Precio"),("importe","Importe")]:
+            self.cart_tree.heading(col, text=head)
+            self.cart_tree.column(col, width=90)
+        self.cart_tree.pack(fill="both", expand=True, pady=5)
+
+        # Right: acciones venta
+        right = ttk.Frame(frm)
+        right.pack(side="right", fill="y")
+
+        ttk.Label(right, text="Cliente (ID):").grid(row=0, column=0, sticky="e")
+        self.sale_client = ttk.Entry(right)
+        self.sale_client.grid(row=0, column=1, pady=2)
+        self.sale_client.insert(0, "C001")
+
+        ttk.Label(right, text="Código producto:").grid(row=1, column=0, sticky="e")
+        self.sale_prod_code = ttk.Entry(right)
+        self.sale_prod_code.grid(row=1, column=1, pady=2)
+
+        ttk.Label(right, text="Cantidad:").grid(row=2, column=0, sticky="e")
+        self.sale_quantity = ttk.Entry(right)
+        self.sale_quantity.grid(row=2, column=1, pady=2)
+        self.sale_quantity.insert(0, "1")
+
+        def add_to_cart():
+            code = self.sale_prod_code.get().strip()
+            if not code:
+                messagebox.showwarning("Atención", "Ingresa el código del producto.")
+                return
+            prod = None
+            for p in self.products:
+                if p["codigo"] == code:
+                    prod = p
+                    break
+            if not prod:
+                messagebox.showerror("Error", "Producto no encontrado.")
+                return
+            try:
+                qty = int(self.sale_quantity.get())
+            except:
+                messagebox.showerror("Error", "Cantidad inválida.")
+                return
+            if qty <= 0:
+                messagebox.showerror("Error", "La cantidad debe ser mayor que 0.")
+                return
+            if prod.get("stock", 0) < qty:
+                messagebox.showwarning("Stock", f"No hay suficiente stock. Disponible: {prod.get('stock',0)}")
+                return
+            importe = round(qty * float(prod["precio"]), 2)
+            # añade al treeview
+            self.cart_tree.insert("", tk.END, values=(prod["codigo"], prod["nombre"], qty, f"{prod['precio']:.2f}", f"{importe:.2f}"))
+            self.update_totals()
+
+        def remove_cart_item():
+            sel = self.cart_tree.selection()
+            if not sel:
+                messagebox.showwarning("Atención", "Selecciona un item del carrito.")
+                return
+            for s in sel:
+                self.cart_tree.delete(s)
+            self.update_totals()
+
+        ttk.Button(right, text="Añadir al carrito", command=add_to_cart).grid(row=3, column=0, columnspan=2, pady=5, sticky="ew")
+        ttk.Button(right, text="Quitar seleccionado", command=remove_cart_item).grid(row=4, column=0, columnspan=2, pady=2, sticky="ew")
+
+        # Totales y finalizar
+        totals_frame = ttk.LabelFrame(right, text="Totales")
+        totals_frame.grid(row=5, column=0, columnspan=2, pady=10, sticky="ew")
+        ttk.Label(totals_frame, text="Subtotal:").grid(row=0, column=0, sticky="e")
+        self.lbl_subtotal = ttk.Label(totals_frame, text="$0.00")
+        self.lbl_subtotal.grid(row=0, column=1, sticky="w")
+        ttk.Label(totals_frame, text="IVA (16%):").grid(row=1, column=0, sticky="e")
+        self.lbl_iva = ttk.Label(totals_frame, text="$0.00")
+        self.lbl_iva.grid(row=1, column=1, sticky="w")
+        ttk.Label(totals_frame, text="Total:").grid(row=2, column=0, sticky="e")
+        self.lbl_total = ttk.Label(totals_frame, text="$0.00")
+        self.lbl_total.grid(row=2, column=1, sticky="w")
+
+        def finalize_sale():
+            # Obtener cliente
+            client_id = self.sale_client.get().strip()
+            if not client_id:
+                messagebox.showerror("Error", "Ingresa el ID del cliente.")
+                return
+            client = None
+            for c in self.clients:
+                if c["id"] == client_id:
+                    client = c
+                    break
+            if not client:
+                if not messagebox.askyesno("Cliente no encontrado", "Cliente no encontrado. ¿Deseas registrar el cliente ahora?"):
+                    return
+                # pedir datos mínimos
+                nombre = simpledialog.askstring("Registrar cliente", "Nombre completo:")
+                telefono = simpledialog.askstring("Registrar cliente", "Teléfono (opcional):")
+                if not nombre:
+                    messagebox.showerror("Error", "Nombre requerido.")
+                    return
+                client = {"id": client_id, "nombre": nombre, "telefono": telefono or ""}
+                self.clients.append(client)
+                save_json(CLIENTS_FILE, self.clients)
+                self.refresh_clients_listbox()
+
+            # Recolectar carrito
+            items = []
+            for row in self.cart_tree.get_children():
+                codigo, nombre, cantidad, precio, importe = self.cart_tree.item(row)["values"]
+                items.append({"codigo": codigo, "nombre": nombre, "cantidad": int(cantidad), "precio": float(precio), "importe": float(importe)})
+            if not items:
+                messagebox.showwarning("Carrito vacío", "Agrega productos al carrito antes de finalizar la venta.")
+                return
+
+            # Calcular totales
+            subtotal = sum(item["importe"] for item in items)
+            iva = round(subtotal * IVA_RATE, 2)
+            total = round(subtotal + iva, 2)
+
+            # Actualizar stock
+            for item in items:
+                for p in self.products:
+                    if p["codigo"] == item["codigo"]:
+                        p["stock"] = max(0, p.get("stock",0) - item["cantidad"])
+                        break
+            save_json(PRODUCTS_FILE, self.products)
+            self.refresh_products_listbox()
+            self.refresh_sales_products()
+
+            # Crear ticket
+            ticket_id = str(uuid.uuid4())[:8]
+            ticket = {
+                "id": ticket_id,
+                "fecha": datetime.now().isoformat(),
+                "cliente": client,
+                "items": items,
+                "subtotal": round(subtotal, 2),
+                "iva": iva,
+                "total": total,
+                "usuario": self.user["username"]
+            }
+            self.tickets.append(ticket)
+            save_json(TICKETS_FILE, self.tickets)
+
+            # Guardar ticket como archivo .txt (nota de venta digital)
+            ticket_text = self.render_ticket_text(ticket)
+            ticket_filename = os.path.join(DATA_DIR, f"ticket_{ticket_id}.txt")
+            try:
+                with open(ticket_filename, "w", encoding="utf-8") as f:
+                    f.write(ticket_text)
+            except Exception as e:
+                messagebox.showwarning("Advertencia", f"No se pudo guardar ticket en archivo:\n{e}")
+
+            messagebox.showinfo("Venta realizada", f"Venta registrada correctamente. Ticket ID: {ticket_id}\nSe generó el archivo: {ticket_filename}")
+            # Limpiar carrito
+            for row in self.cart_tree.get_children():
+                self.cart_tree.delete(row)
+            self.update_totals()
+            self.refresh_tickets_tab()
+
+        ttk.Button(right, text="Finalizar venta (Generar ticket)", command=finalize_sale).grid(row=6, column=0, columnspan=2, pady=8, sticky="ew")
+
+    def refresh_sales_products(self):
+        if not hasattr(self, "sales_products_lb"): return
+        self.sales_products_lb.delete(0, tk.END)
+        for p in self.products:
+            self.sales_products_lb.insert(tk.END, f"{p['codigo']} - {p['nombre']} | ${p['precio']:.2f} | stock:{p.get('stock',0)}")
+
+    def update_totals(self):
+        subtotal = 0.0
+        for row in self.cart_tree.get_children():
+            importe_str = self.cart_tree.item(row)["values"][4]
+            try:
+                importe = float(importe_str)
+            except:
+                importe = 0.0
+            subtotal += importe
+        subtotal = round(subtotal, 2)
+        iva = round(subtotal * IVA_RATE, 2)
+        total = round(subtotal + iva, 2)
+        self.lbl_subtotal.config(text=f"${subtotal:.2f}")
+        self.lbl_iva.config(text=f"${iva:.2f}")
+        self.lbl_total.config(text=f"${total:.2f}")
+
+    def render_ticket_text(self, ticket):
+        lines = []
+        lines.append("----- TIENDA - Nota de Venta -----")
+        lines.append(f"Ticket ID: {ticket['id']}")
+        fecha = ticket['fecha']
+        # formato legible
+        try:
+            dt = datetime.fromisoformat(fecha)
+            fecha_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+        except:
+            fecha_str = fecha
+        lines.append(f"Fecha: {fecha_str}")
+        lines.append(f"Usuario: {ticket.get('usuario','')}")
+        lines.append("")
+        lines.append("Cliente:")
+        lines.append(f"  ID: {ticket['cliente'].get('id','')}")
+        lines.append(f"  Nombre: {ticket['cliente'].get('nombre','')}")
+        lines.append(f"  Teléfono: {ticket['cliente'].get('telefono','')}")
+        lines.append("")
+        lines.append("Detalle:")
+        lines.append(f"{'Código':8} {'Producto':20} {'Cant':>4} {'Precio':>8} {'Importe':>10}")
+        for it in ticket["items"]:
+            lines.append(f"{it['codigo']:8} {it['nombre'][:20]:20} {it['cantidad']:>4} {it['precio']:>8.2f} {it['importe']:>10.2f}")
+        lines.append("")
+        lines.append(f"Subtotal: ${ticket['subtotal']:.2f}")
+        lines.append(f"IVA (16%): ${ticket['iva']:.2f}")
+        lines.append(f"Total: ${ticket['total']:.2f}")
+        lines.append("")
+        lines.append("Gracias por su compra.")
+        return "\n".join(lines)
+
+    # -------------------------
+    # Tickets
+    # -------------------------
+    def build_tickets_tab(self, parent):
+        frm = ttk.Frame(parent, padding=10)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Tickets generados", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        self.tickets_tree = ttk.Treeview(frm, columns=("id","fecha","cliente","total"), show="headings", height=12)
+        for col, head in [("id","ID"),("fecha","Fecha"),("cliente","Cliente"),("total","Total")]:
+            self.tickets_tree.heading(col, text=head)
+            self.tickets_tree.column(col, width=150)
+        self.tickets_tree.pack(fill="both", expand=True, pady=5)
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Refrescar", command=self.refresh_tickets_tab).pack(side="left", padx=3)
+        ttk.Button(btns, text="Ver ticket", command=self.view_selected_ticket).pack(side="left", padx=3)
+        ttk.Button(btns, text="Exportar todos (tickets.json)", command=self.export_tickets_json).pack(side="right", padx=3)
+
+        self.refresh_tickets_tab()
+
+    def refresh_tickets_tab(self):
+        if not hasattr(self, "tickets_tree"): return
+        self.tickets_tree.delete(*self.tickets_tree.get_children())
+        for t in self.tickets:
+            fecha = t.get("fecha","")
+            try:
+                dt = datetime.fromisoformat(fecha)
+                fecha_str = dt.strftime("%Y-%m-%d %H:%M")
+            except:
+                fecha_str = fecha
+            cliente = t.get("cliente",{}).get("nombre","")
+            total = f"${t.get('total',0):.2f}"
+            self.tickets_tree.insert("", tk.END, values=(t.get("id",""), fecha_str, cliente, total))
+
+    def view_selected_ticket(self):
+        sel = self.tickets_tree.selection()
+        if not sel:
+            messagebox.showwarning("Atención", "Selecciona un ticket para ver.")
+            return
+        item = self.tickets_tree.item(sel[0])["values"]
+        ticket_id = item[0]
+        ticket = next((t for t in self.tickets if t["id"] == ticket_id), None)
+        if not ticket:
+            messagebox.showerror("Error", "Ticket no encontrado.")
+            return
+        text = self.render_ticket_text(ticket)
+        # Mostrar en ventana
+        top = tk.Toplevel(self.root)
+        top.title(f"Ticket {ticket_id}")
+        txt = tk.Text(top, width=80, height=25)
+        txt.pack(fill="both", expand=True)
+        txt.insert("1.0", text)
+        txt.config(state="disabled")
+
+    def export_tickets_json(self):
+        save_json(TICKETS_FILE, self.tickets)
+        messagebox.showinfo("Exportar", f"Tickets guardados en {TICKETS_FILE}")
+
+    # -------------------------
+    # Helpers
+   
+    def clear_root(self):
+        for w in self.root.winfo_children():
+            w.destroy()
+
+# -------------------------
+# Ejecutar
+
+def main():
+    root = tk.Tk() 
+    root.geometry("900x650")
+    app = TiendaApp(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
